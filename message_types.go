@@ -4,8 +4,7 @@
 
 package sunrpc
 
-// RPCProtocolVersion is the version of RPC protocol as described in RFC 5531
-const RPCProtocolVersion = 2
+const rpcVersionSupported = 2
 
 // As per XDR (RFC 4506):
 // Enumerations have the same representation as 32 bit signed integers.
@@ -89,6 +88,14 @@ type OpaqueAuth struct {
 	Body   []byte
 }
 
+// RPCMessageHeader contains the transaction ID and the RPC message type.
+type RPCMessageHeader struct {
+	Xid  uint32
+	Type MsgType
+}
+
+/* CALL structs */
+
 // CallBody represents the body of a RPC Call
 type CallBody struct {
 	RPCVersion uint32     // must be equal to 2
@@ -98,6 +105,15 @@ type CallBody struct {
 	Cred       OpaqueAuth // Authentication credential
 	Verf       OpaqueAuth // Authentication verifier
 }
+
+// RPCMsgCall contains a RPC Message Call
+type RPCMsgCall struct {
+	Header RPCMessageHeader
+	Body   CallBody
+	// procedure-specific parameters start here
+}
+
+/* REPLY structs */
 
 // MismatchReply is used in ProgMismatch and RPCMismatch cases to denote
 // lowest and highest version of RPC version or program version supported
@@ -125,17 +141,10 @@ type RejectedReply struct {
 	AuthStat     AuthStat      `xdr:"unioncase=1"` // AuthError
 }
 
-// ReplyBody represents a generic RPC reply to a `Call`
-type ReplyBody struct {
+// RPCMsgReply represents a generic RPC reply to a `Call`
+type RPCMsgReply struct {
+	Header RPCMessageHeader
 	Stat   ReplyStat     `xdr:"union"`
 	Areply AcceptedReply `xdr:"unioncase=0"`
 	Rreply RejectedReply `xdr:"unioncase=1"`
-}
-
-// RPCMsg represents a complete RPC message (call or reply)
-type RPCMsg struct {
-	Xid   uint32
-	Type  MsgType   `xdr:"union"`
-	CBody CallBody  `xdr:"unioncase=0"`
-	RBody ReplyBody `xdr:"unioncase=1"`
 }

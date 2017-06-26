@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/rpc"
@@ -18,10 +17,10 @@ func main() {
 
 	_ = sunrpc.RegisterProcedure(sunrpc.Procedure{
 		ID:   sunrpc.ProcedureID{programNumber, programVersion, uint32(1)},
-		Name: "Arith.Add"}, true)
+		Name: "Arith.Add"})
 	_ = sunrpc.RegisterProcedure(sunrpc.Procedure{
 		ID:   sunrpc.ProcedureID{programNumber, programVersion, uint32(2)},
-		Name: "Arith.Multiply"}, true)
+		Name: "Arith.Multiply"})
 
 	sunrpc.DumpProcedureRegistry()
 
@@ -37,17 +36,8 @@ func main() {
 		log.Fatal("net.Dial() failed: ", err)
 	}
 
-	// Get notified on server closes the connection
-	notifyClose := make(chan io.ReadWriteCloser, 5)
-	go func() {
-		for rwc := range notifyClose {
-			conn := rwc.(net.Conn)
-			log.Printf("Server %s disconnected", conn.RemoteAddr().String())
-		}
-	}()
-
 	// Create client using sunrpc codec
-	client := rpc.NewClientWithCodec(sunrpc.NewClientCodec(conn, notifyClose))
+	client := rpc.NewClientWithCodec(sunrpc.NewClientCodec(conn))
 
 	// Remote function's arguments and results placeholder
 	args := Args{7, 8}

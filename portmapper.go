@@ -39,6 +39,11 @@ type PortMapping struct {
 	Port     uint32
 }
 
+type Pmap2_call_result struct {
+	Port uint32
+	Res  []byte
+}
+
 var registryInit sync.Once
 
 func initRegistry() {
@@ -55,7 +60,7 @@ func initRegistry() {
 
 	for id, procName := range remoteProcedures {
 		procedureID.ProcedureNumber = uint32(id)
-		_ = RegisterProcedure(Procedure{procedureID, procName}, true)
+		_ = RegisterProcedure(Procedure{procedureID, procName})
 	}
 }
 
@@ -71,7 +76,7 @@ func initPmapClient(host string) *rpc.Client {
 		return nil
 	}
 
-	return rpc.NewClientWithCodec(NewClientCodec(conn, nil))
+	return rpc.NewClientWithCodec(NewClientCodec(conn))
 }
 
 // PmapSet creates port mapping of the program specified. It return true on
@@ -123,6 +128,8 @@ func PmapUnset(programNumber, programVersion uint32) (bool, error) {
 func PmapGetPort(host string, programNumber, programVersion uint32, protocol Protocol) (uint32, error) {
 
 	var port uint32
+
+	//var res Pmap2_coall_result
 
 	client := initPmapClient(host)
 	if client == nil {

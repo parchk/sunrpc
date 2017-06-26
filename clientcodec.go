@@ -6,18 +6,42 @@ package sunrpc
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net"
 	"net/rpc"
+	"strconv"
 	"sync"
 
 	"github.com/rasky/go-xdr/xdr2"
 )
 
+func hexdump(s []byte) string {
+	buf := new(bytes.Buffer)
+	raw := ""
+	for i, b := range s {
+
+		buf.WriteString(fmt.Sprintf("%02x ", b))
+
+		if c := rune(b); strconv.IsPrint(c) {
+			raw += string(b)
+		} else {
+			raw += "."
+		}
+
+		if (i+1)%16 == 0 {
+			buf.WriteString(fmt.Sprintf("  |%08s|\n", raw))
+			raw = ""
+		} else if (i+1)%8 == 0 {
+			buf.WriteString(" ")
+		}
+	}
+	return buf.String()
+}
+
 type clientCodec struct {
 	conn         io.ReadWriteCloser // network connection
 	recordReader io.Reader          // reader for RPC record
-	notifyClose  chan<- io.ReadWriteCloser
 
 	// Sun RPC responses include Seq (XID) but not ServiceMethod (procedure
 	// number). Go package net/rpc expects both. So we save ServiceMethod
@@ -26,20 +50,17 @@ type clientCodec struct {
 	pending map[uint64]string // maps Seq (XID) to ServiceMethod
 }
 
-// NewClientCodec returns a new rpc.ClientCodec using Sun RPC on conn.
-// If a non-nil channel is passed as second argument, the conn is sent on
-// that channel when Close() is called on conn.
-func NewClientCodec(conn io.ReadWriteCloser, notifyClose chan<- io.ReadWriteCloser) rpc.ClientCodec {
+// NewClientCodec returns a new rpc.ClientCodec using Sun RPC on conn
+func NewClientCodec(conn io.ReadWriteCloser) rpc.ClientCodec {
 	return &clientCodec{
-		conn:        conn,
-		notifyClose: notifyClose,
-		pending:     make(map[uint64]string),
+		conn:    conn,
+		pending: make(map[uint64]string),
 	}
 }
 
 // NewClient returns a new rpc.Client which internally uses Sun RPC codec
 func NewClient(conn io.ReadWriteCloser) *rpc.Client {
-	return rpc.NewClientWithCodec(NewClientCodec(conn, nil))
+	return rpc.NewClientWithCodec(NewClientCodec(conn))
 }
 
 // Dial connects to a Sun-RPC server at the specified network address
@@ -67,11 +88,12 @@ func (c *clientCodec) WriteRequest(req *rpc.Request, param interface{}) error {
 	c.mutex.Unlock()
 
 	// Encapsulate rpc.Request.Seq and rpc.Request.ServiceMethod
-	call := RPCMsg{
-		Xid:  uint32(req.Seq),
-		Type: Call,
-		CBody: CallBody{
-			RPCVersion: RPCProtocolVersion,
+	rpcBody := RPCMsgCall{
+		Header: RPCMessageHeader{
+			Xid:  uint32(req.Seq),
+			Type: Call},
+		Body: CallBody{
+			RPCVersion: rpcVersionSupported,
 			Program:    procedureID.ProgramNumber,
 			Version:    procedureID.ProgramVersion,
 			Procedure:  procedureID.ProcedureNumber,
@@ -80,7 +102,7 @@ func (c *clientCodec) WriteRequest(req *rpc.Request, param interface{}) error {
 
 	payload := new(bytes.Buffer)
 
-	if _, err := xdr.Marshal(payload, &call); err != nil {
+	if _, err := xdr.Marshal(payload, &rpcBody); err != nil {
 		return err
 	}
 
@@ -91,32 +113,57 @@ func (c *clientCodec) WriteRequest(req *rpc.Request, param interface{}) error {
 		}
 	}
 
+	fmt.Println("cli wirte byte :", payload.Bytes())
+	fmt.Printf("%s\n", hexdump(payload.Bytes()))
+
 	// Write payload to network
 	_, err := WriteFullRecord(c.conn, payload.Bytes())
 	if err != nil {
-		if err == io.EOF && c.notifyClose != nil {
-			c.notifyClose <- c.conn
-		}
 		return err
 	}
 
 	return nil
 }
 
-func (c *clientCodec) checkReplyForErr(reply *RPCMsg) error {
+func (c *clientCodec) ReadResponseHeader(resp *rpc.Response) error {
 
-	if reply.Type != Reply {
+	// Read entire RPC message from network
+	record, err := ReadFullRecord(c.conn)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("cli read bytes :", record)
+	fmt.Printf("%s\n", hexdump(record))
+
+	c.recordReader = bytes.NewReader(record)
+
+	// Unmarshal record as RPC reply
+	var reply RPCMsgReply
+	if _, err = xdr.Unmarshal(c.recordReader, &reply); err != nil {
+		return err
+	}
+
+	// Unpack rpc.Request.Seq and set rpc.Request.ServiceMethod
+	resp.Seq = uint64(reply.Header.Xid)
+	c.mutex.Lock()
+	resp.ServiceMethod = c.pending[resp.Seq]
+	delete(c.pending, resp.Seq)
+	c.mutex.Unlock()
+
+	if reply.Header.Type != Reply {
 		return ErrInvalidRPCMessageType
 	}
 
-	switch reply.RBody.Stat {
+	// Filter out all valid RPC error cases
+	switch reply.Stat {
 	case MsgAccepted:
-		switch reply.RBody.Areply.Stat {
+		switch reply.Areply.Stat {
 		case Success:
 		case ProgMismatch:
 			return ErrProgMismatch{
-				reply.RBody.Areply.MismatchInfo.Low,
-				reply.RBody.Areply.MismatchInfo.High}
+				reply.Areply.MismatchInfo.Low,
+				reply.Areply.MismatchInfo.High}
 		case ProgUnavail:
 			return ErrProgUnavail
 		case ProcUnavail:
@@ -129,11 +176,11 @@ func (c *clientCodec) checkReplyForErr(reply *RPCMsg) error {
 			return ErrInvalidMsgAccepted
 		}
 	case MsgDenied:
-		switch reply.RBody.Rreply.Stat {
+		switch reply.Rreply.Stat {
 		case RPCMismatch:
 			return ErrRPCMismatch{
-				reply.RBody.Rreply.MismatchInfo.Low,
-				reply.RBody.Rreply.MismatchInfo.High}
+				reply.Rreply.MismatchInfo.Low,
+				reply.Rreply.MismatchInfo.High}
 		case AuthError:
 			return ErrAuthError
 		default:
@@ -141,39 +188,6 @@ func (c *clientCodec) checkReplyForErr(reply *RPCMsg) error {
 		}
 	default:
 		return ErrInvalidRPCRepyType
-	}
-
-	return nil
-}
-
-func (c *clientCodec) ReadResponseHeader(resp *rpc.Response) error {
-
-	// Read entire RPC message from network
-	record, err := ReadFullRecord(c.conn)
-	if err != nil {
-		if err == io.EOF && c.notifyClose != nil {
-			c.notifyClose <- c.conn
-		}
-		return err
-	}
-
-	c.recordReader = bytes.NewReader(record)
-
-	// Unmarshal record as RPC reply
-	var reply RPCMsg
-	if _, err = xdr.Unmarshal(c.recordReader, &reply); err != nil {
-		return err
-	}
-
-	// Unpack rpc.Request.Seq and set rpc.Request.ServiceMethod
-	resp.Seq = uint64(reply.Xid)
-	c.mutex.Lock()
-	resp.ServiceMethod = c.pending[resp.Seq]
-	delete(c.pending, resp.Seq)
-	c.mutex.Unlock()
-
-	if err := c.checkReplyForErr(&reply); err != nil {
-		return err
 	}
 
 	return nil

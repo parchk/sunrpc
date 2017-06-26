@@ -67,10 +67,10 @@ func isValidProcedureName(procedureName string) bool {
 	return true
 }
 
-// RegisterProcedure will register the procedure in the registry.
-func RegisterProcedure(procedure Procedure, validateProcName bool) error {
+// RegisterProcedure will register the procedure in the registry
+func RegisterProcedure(procedure Procedure) error {
 
-	if validateProcName && !isValidProcedureName(procedure.Name) {
+	if !isValidProcedureName(procedure.Name) {
 		return errors.New("Invalid procedure name")
 	}
 
@@ -127,11 +127,15 @@ func RemoveProcedure(procedure interface{}) {
 
 // DumpProcedureRegistry will print the entire procedure map.
 // Use this for logging/debugging.
-func DumpProcedureRegistry() {
+func DumpProcedureRegistry() string {
 	procedureRegistry.RLock()
 	defer procedureRegistry.RUnlock()
 
+	var v string
+
 	for key, value := range procedureRegistry.rMap {
-		fmt.Printf("%s : %+v\n", key, value)
+		v += fmt.Sprintf("%s : %+v\n", key, value)
 	}
+
+	return v
 }

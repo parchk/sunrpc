@@ -27,10 +27,10 @@ func main() {
 
 	_ = sunrpc.RegisterProcedure(sunrpc.Procedure{
 		ID:   sunrpc.ProcedureID{programNumber, programVersion, uint32(1)},
-		Name: "Arith.Add"}, true)
+		Name: "Arith.Add"})
 	_ = sunrpc.RegisterProcedure(sunrpc.Procedure{
 		ID:   sunrpc.ProcedureID{programNumber, programVersion, uint32(2)},
-		Name: "Arith.Multiply"}, true)
+		Name: "Arith.Multiply"})
 
 	sunrpc.DumpProcedureRegistry()
 
